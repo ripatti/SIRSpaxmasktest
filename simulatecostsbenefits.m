@@ -21,9 +21,10 @@ uspop =  N*1e6; % 18 and over, 2023, in https://data.census.gov/table/ACSDP1Y202
 %paxlovidcosts = db.NewCases*uspop*530/1000000000; % in billions of $
 paxlovidcosts = db.NewCases*uspop*paxlovidcost*paxlovidshare/1000000000; % in billions of $
 paxCostsA = convert(paxlovidcosts,'A', 'method=',@sum);
-maskCostsA = convert(uspop*2*365*maskcost*maskshare*Series(qrange,1)/1e9,'A', 'method=',@sum);
-vaccinecostsA = convert(uspop*4*vaccinecost*vaccineshare*Series(qrange,1)/1e9,'A', 'method=',@sum);
-testCostsA = convert(uspop*1*52*testcost*testshare*Series(qrange,1)/1e9,'A', 'method=',@sum);
+% I think here should be quarterly costs
+maskCostsA = convert(uspop*2*(365/4)*maskcost*maskshare*Series(qrange,1)/1e9,'A', 'method=',@sum);
+vaccinecostsA = convert(uspop*1*vaccinecost*vaccineshare*Series(qrange,1)/1e9,'A', 'method=',@sum);
+testCostsA = convert(uspop*1*(52/4)*testcost*testshare*Series(qrange,1)/1e9,'A', 'method=',@sum);
 benefits = aCosts;
 benefits = -benefits{:,1} + benefits{:,2};
 costs = paxCostsA + maskCostsA + vaccinecostsA + testCostsA;
