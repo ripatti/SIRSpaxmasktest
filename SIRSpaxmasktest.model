@@ -1,0 +1,336 @@
+% SIRS model with weekly testing, isolation, Paxlovid, and Long COVID
+% Model time scale: ONE WEEK
+%
+% Based on SIRSpax.model supplied by the user.
+%
+% IMPORTANT WEEKLY-FREQUENCY ADJUSTMENT
+% -------------------------------------
+% The original file used
+%   pi_ru = 1/(7.33/7)
+%   pi_rt = 1/(3.73/7)
+% which gives pi_rt > 1. This is not admissible as a weekly transition
+% probability. Here the day-duration targets are converted to bounded
+% weekly exit probabilities:
+%
+%   gamma_U = 1-exp(-7/7.33) = 0.6151799806
+%   gamma_P = 1-exp(-7/3.73) = 0.8469017801
+%
+% To preserve the original reproduction-number targets R_U=2 and R_P=1.27
+% in the simple weekly geometric benchmark:
+%
+%   beta_U = R_U*gamma_U = 1.2303599613
+%   beta_P = R_P*gamma_P = 1.0755652607
+%
+% Hence the implied proportional Paxlovid reduction in weekly transmission
+% intensity is
+%
+%   eta_P = 1-beta_P/beta_U = 0.1258125308
+%
+% LONG COVID
+% ----------
+% The Long-COVID block preserves the calibration in SIRSpax.model:
+%
+%   pi_lcu = 0.04*0.08          = 0.0032
+%   pi_lct = 0.74*0.04*0.08     = 0.002368
+%
+% and persistence:
+%   pi_lC1 = 0.8512362956
+%   pi_lC2 = 0.0497855435    at lag 7 weeks
+%   pi_lC3 = 0.0881757138    at lag 18 weeks
+%
+% In the expanded model, new Long-COVID cases are attached to recovery
+% flows by eventual treatment status. This avoids misclassifying a case
+% that starts untreated but later receives Paxlovid.
+%
+% TESTING
+% -------
+% f is tests per person per week. xi_U and xi_P are per-test sensitivities.
+% The weekly probability of detection is
+%
+%   phi = 1-(1-xi)^f
+%
+% which remains between zero and one for any nonnegative f.
+%
+% TIMING WITHIN A WEEK
+% --------------------
+% Beginning-of-week infectious stocks are first subject to testing.
+% Among those not detected, treatment initiation/recovery then occurs.
+% New infections generated during the week enter their infection
+% compartments at the end of the week and do not exit in the same week.
+%
+% share = fraction of DETECTED untreated infected persons who receive
+%         Paxlovid immediately upon detection.
+%
+% p0    = fraction of NEW infections already placed on Paxlovid.
+%         Baseline p0=0 because Paxlovid is normally started after
+%         diagnosis/testing.
+%
+% kappa_I = weekly probability that an undetected untreated case starts
+%           Paxlovid without entering isolation.
+% kappa_Q = weekly probability that an isolated untreated case later
+%           starts Paxlovid.
+%
+% (c) Antti Ripatti, 2026-
+% Expanded/calibrated version
+%%
+
+!transition-variables
+  S, lam, I, Iu, It, Qu, Qt, R,
+  phiU, phiT,
+  NewCases, NewCasesU, NewCasesT,
+  RecU, RecT,
+  LC,
+  Iwt, Iwu, Iw
+
+!transition-shocks
+  e_variant
+
+!parameters
+
+  %------------------------------------------------------------
+  % Epidemiological calibration: weekly
+  %------------------------------------------------------------
+
+  gamma_u = 0.6151799806;     % untreated weekly recovery probability
+  gamma_t = 0.8469017801;     % Paxlovid weekly recovery probability
+
+  R0_u = 2;
+  R0_t = 1.27;
+
+  beta_u = 1.2303599613;       % weekly untreated transmission coefficient
+  eta_p  = 0.1258125308;        % Paxlovid proportional reduction in beta
+
+  % Residual transmission while isolated.
+  % NOT identified in the original file; calibrate/sensitivity-test.
+  rho_q = 0.10;
+
+  %------------------------------------------------------------
+  % Treatment shares and transition probabilities
+  %------------------------------------------------------------
+
+  share = 1;       % share of detected Iu receiving Paxlovid
+  p0 = 0;          % share of new infections already on Paxlovid
+
+  kappa_I = 0;     % Iu -> It without isolation, weekly probability
+  kappa_Q = 0;     % Qu -> Qt after isolation, weekly probability
+
+  %------------------------------------------------------------
+  % Testing
+  %------------------------------------------------------------
+
+  f = 1;           % tests per person per week; scenario parameter
+  xi_u = 0.80;     % per-test sensitivity; provisional
+  xi_t = 0.80;     % per-test sensitivity; provisional
+
+  %------------------------------------------------------------
+  % Waning immunity
+  %------------------------------------------------------------
+
+  pi_s = 1/26;     % mean immune spell about 26 weeks in geometric model
+
+  %------------------------------------------------------------
+  % Long COVID: inherited from SIRSpax.model
+  %------------------------------------------------------------
+
+  pi_lcu = 0.04*0.08;
+  pi_lct = 0.74*0.04*0.08;
+
+  pi_lC1 = 0.8512362956;
+  pi_lC2 = 0.0497855435;
+  pi_lC3 = 0.0881757138;
+
+  %------------------------------------------------------------
+  % Work-loss shares: inherited from SIRSpax.model
+  %------------------------------------------------------------
+
+  piWt = 4/7;
+  piWu = 3/7;
+
+
+%% Model block
+!transition_equations
+
+  %------------------------------------------------------------
+  % Testing probabilities
+  %------------------------------------------------------------
+
+  phiU = 1 - (1-xi_u)^f;
+  phiT = 1 - (1-xi_t)^f;
+
+
+  %------------------------------------------------------------
+  % Force of infection
+  %
+  % beta_t = (1-eta_p)*beta_u
+  % Isolation multiplies infectiousness by rho_q.
+  %------------------------------------------------------------
+
+  lam =
+      beta_u*Iu{-1}
+    + (1-eta_p)*beta_u*It{-1}
+    + rho_q*beta_u*Qu{-1}
+    + rho_q*(1-eta_p)*beta_u*Qt{-1}
+  ;
+
+
+  %------------------------------------------------------------
+  % New infections
+  %------------------------------------------------------------
+
+  NewCases  = lam*S{-1};
+  NewCasesU = (1-p0)*NewCases;
+  NewCasesT = p0*NewCases;
+
+
+  %------------------------------------------------------------
+  % Recovery flows
+  %
+  % Sequencing:
+  % 1. testing/detection;
+  % 2. among undetected untreated, possible Paxlovid initiation;
+  % 3. recovery of those remaining in the current state.
+  %
+  % Qu recovery is conditional on not starting Paxlovid during the week.
+  %------------------------------------------------------------
+
+  RecU =
+      (1-phiU)*(1-kappa_I)*gamma_u*Iu{-1}
+    + (1-kappa_Q)*gamma_u*Qu{-1}
+  ;
+
+  RecT =
+      (1-phiT)*gamma_t*It{-1}
+    + gamma_t*Qt{-1}
+  ;
+
+
+  %------------------------------------------------------------
+  % Susceptible
+  %------------------------------------------------------------
+
+  S =#
+      S{-1}
+    - NewCases
+    + pi_s*R{-1}
+    + 0.9*e_variant
+  ;
+
+
+  %------------------------------------------------------------
+  % Undetected, untreated infectious
+  %
+  % Survivors after testing, optional treatment initiation, and recovery,
+  % plus new untreated infections.
+  %------------------------------------------------------------
+
+  Iu =#
+      (1-phiU)*(1-kappa_I)*(1-gamma_u)*Iu{-1}
+    + NewCasesU
+    + 0.1*e_variant
+  ;
+
+
+  %------------------------------------------------------------
+  % Undetected, Paxlovid-treated infectious
+  %
+  % Inflows:
+  %   - new infections assigned to Paxlovid through p0
+  %   - undetected Iu starting Paxlovid through kappa_I
+  %
+  % Existing It is first tested; undetected treated cases can recover.
+  %------------------------------------------------------------
+
+  It =#
+      (1-phiT)*(1-gamma_t)*It{-1}
+    + (1-phiU)*kappa_I*Iu{-1}
+    + NewCasesT
+  ;
+
+
+  %------------------------------------------------------------
+  % Detected/isolated, untreated
+  %
+  % A share (1-share) of newly detected Iu enters Qu.
+  % Existing Qu either starts Paxlovid, recovers, or remains in Qu.
+  %------------------------------------------------------------
+
+  Qu =#
+      (1-kappa_Q)*(1-gamma_u)*Qu{-1}
+    + (1-share)*phiU*Iu{-1}
+  ;
+
+
+  %------------------------------------------------------------
+  % Detected/isolated, Paxlovid treated
+  %
+  % Inflows:
+  %   - share of newly detected Iu treated immediately
+  %   - detected It
+  %   - existing Qu starting Paxlovid
+  %------------------------------------------------------------
+
+  Qt =#
+      (1-gamma_t)*Qt{-1}
+    + share*phiU*Iu{-1}
+    + phiT*It{-1}
+    + kappa_Q*Qu{-1}
+  ;
+
+
+  %------------------------------------------------------------
+  % Aggregate infectious stock
+  %------------------------------------------------------------
+
+  I = Iu + It + Qu + Qt;
+
+
+  %------------------------------------------------------------
+  % Recovered
+  %------------------------------------------------------------
+
+  R =#
+      R{-1}
+    + RecU
+    + RecT
+    - pi_s*R{-1}
+    - e_variant
+  ;
+
+
+  %------------------------------------------------------------
+  % Long COVID
+  %
+  % The persistence structure is inherited unchanged from SIRSpax.model.
+  %
+  % Incidence is now based on recovery flows:
+  %   untreated recovery -> pi_lcu
+  %   Paxlovid-treated recovery -> pi_lct
+  %
+  % This ensures that a person who starts untreated but receives
+  % Paxlovid before recovery receives the treated Long-COVID risk.
+  %------------------------------------------------------------
+
+  LC =#
+      pi_lC1*LC{-1}
+    + pi_lC2*LC{-7}
+    + pi_lC3*LC{-18}
+    + pi_lcu*RecU
+    + pi_lct*RecT
+  ;
+
+
+  %------------------------------------------------------------
+  % Work-loss measures
+  %
+  % Extended from the original Iwt/ Iwu definitions to include
+  % isolated infectious states as well.
+  %------------------------------------------------------------
+
+  Iwt = piWt*(It + Qt);
+  Iwu = piWu*(Iu + Qu);
+  Iw  = Iwt + Iwu;
+
+
+  % Population accounting (apart from the exogenous variant shock):
+  %
+  % 1 =# S + Iu + It + Qu + Qt + R;

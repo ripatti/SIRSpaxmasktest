@@ -1,0 +1,61 @@
+% SIRS model of waning immunity with partial Paxlovid vaccinations
+% Model time scale is one week
+% share is the share of treated with Paxlovid
+% u is untreated
+% t is treated in variable names
+% Iris code
+% (c) Antti Ripatti, 2026-
+%%
+%% Definitios
+!transition-variables
+  S, lam, D, Du, Dt, I,  Iu, It, Iwt, Iwu, Iw, R, LC, NewCases
+
+!transition-shocks 
+  e_variant
+  
+!parameters
+  pi_ru = 1/(7.33/7);
+  pi_rt = 1/(3.73/7);
+  share = 1;
+  piu = 2*pi_ru; % =R0*pi_r
+  pit = 1.27*pi_rt;
+  % Let (1-pi_s) = P(staying immune), then average time of staying immune is
+  %             1/[1 - (1-pi_s)]
+  % Assume that the length of immunity is 4 months (16 weeks). Then
+  % 1/[1 - (1-pi_s)] = 16 and pi_s = 1/16.
+  pi_s = 1/26; % 1/(length of immunity in weeks), 1/26 half year frequency
+  pi_lcu = 0.04*0.08; % share of serious LC cases from new cases: incidence x 
+  pi_lct = 0.74*0.04*0.08;
+%  pi_lclen = (1-0.2)^(1/52); % 20 percent still ill after one year
+  % pi_lclen = 0.662; % estimate from persistence of men tiredness from NL data https://www.thelancet.com/journals/lancet/article/PIIS0140-6736(22)01214-4/fulltext#fig2
+  pi_lC1 = 0.8512362956 ;
+  pi_lC2 = 0.0497855435 ;
+  pi_lC3 = 0.0881757138 ;
+  piWt = 4/7;
+  piWu = 3/7;
+  test = 0.1; % share of those who have been tested positive and who comply, ie isolate
+%  pi_lC4 = -0.0305;
+  vacc = 1;
+% !transition-shocks
+%   eps, eta
+
+
+%% Model block
+!transition_equations
+  lam = piu*Iu{-1} + pit*It{-1};
+  NewCases = lam*S{-1};
+  S =# S{-1} - NewCases + pi_s*R{-1} + 0.9*e_variant;
+  Iu =# Iu{-1} + (1-share)*(1-test)*NewCases - pi_ru*Iu{-1} + 0.1*e_variant;
+  It =# max(0, It{-1} + share*(1-test)*NewCases - pi_rt*It{-1} + 0.1*e_variant);
+  % Detected state: Those who are completely isolated and, hence, do not infect
+  % others. In other words: those who have been tested positive and who comply the isolation
+  Du =# Du{-1} + (1-share)*test*NewCases - pi_ru*Du{-1};
+  Dt =# Dt{-1} + share*test*NewCases - pi_rt*Dt{-1};
+  I = It+Iu;
+  D = Du + Dt;
+  R =# R{-1} + pi_ru*(Iu{-1} + Du{-1}) + pi_rt*(It{-1} + Dt{-1}) - pi_s*R{-1} - e_variant;
+  LC =# pi_lC1*LC{-1} + pi_lC2*LC{-7} + pi_lC3*LC{-18} + pi_lcu*piu*Iu{-1}*S{-1} + pi_lct*pit*It{-1}*S{-1}  ;  % + pi_lC4*LC{-33} 
+  Iwt = piWt*It;
+  Iwu = piWu*Iu;
+  Iw = Iwt + Iwu;
+%  1 =# S + I + R;
